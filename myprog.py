@@ -26,6 +26,20 @@ detection_thread = None
 stop_detection = False
 detection_results = []
 
+def update_text_field(text):
+    """Обновление текстового поля с координатами"""
+    global textArea
+    
+    textArea.insert(tk.END, text + "\n")
+    
+    # Автоматическая прокрутка вниз
+    textArea.see(tk.END)
+    
+    # Ограничиваем количество строк 
+    lines = textArea.get("1.0", tk.END).count('\n')
+    if lines > 100:
+        textArea.delete("1.0", "2.0")
+
 def resize_for_display(img, max_size=700):
     height, width = img.shape[:2]
     if height > max_size or width > max_size:
@@ -63,6 +77,14 @@ def run_detection():
                         
                         # Выводим информацию каждые 3 кадра
                         if frame_count % 3 == 0:
+                            if frame_count == 3:
+                                textArea.delete("1.0", tk.END)
+                                textArea.insert(tk.END, f"Кадр {frame_count} - Найдено объектов: {len(obb)}\n")
+                                textArea.insert(tk.END, "="*40 + "\n")
+                            else:
+                                textArea.insert(tk.END, f"\nКадр {frame_count} - Найдено объектов: {len(obb)}\n")
+                                textArea.insert(tk.END, "="*40 + "\n")
+                            
                             print(f"\n{'='*40}")
                             print(f"Кадр {frame_count} - Найдено объектов: {len(obb)}")
                             print(f"{'='*40}")
@@ -80,15 +102,23 @@ def run_detection():
                                 conf = float(box.conf[0])
                                 cls_name = model.names[cls_id] if cls_id in model.names else f"Class {cls_id}"
                                 
-
-                                print(f"Объект {i+1} [{cls_name} {conf:.2%}]: Центр = ({center_x}, {center_y})")
+                                # Формируем сообщение
+                                msg = f"Объект {i+1} [{cls_name} {conf:.2%}]: Центра = ({center_x}, {center_y})"
+                                
+                                # Выводим в консоль
+                                print(msg)
+                                
+                                # Выводим в текстовое поле
+                                textArea.insert(tk.END, msg + "\n")
                                 
                     else:
                         if frame_count % 10 == 0:
                             print("Объекты не обнаружены...")
+                            if frame_count % 30 == 0:  # Обновляем текстовое поле реже
+                                textArea.insert(tk.END, "Объекты не обнаружены...\n")
                     
             except Exception as e:
-                print(f"Ошибка при детекции: {e}")
+                textArea.insert(tk.END, "Ошибка при детекции \n")
         
         time.sleep(0.1)
     
@@ -108,12 +138,16 @@ def start_detection():
         print("Ошибка: Нет видео с камеры")
         return
     
+    # Очищаем текстовое поле при запуске
+    textArea.delete("1.0", tk.END)
+    
     detection_results = []
     stop_detection = False
     detection_thread = threading.Thread(target=run_detection, daemon=True)
     detection_thread.start()
     
     print("OBB детекция запущена. Ожидайте обнаружения объектов...")
+    textArea.insert(tk.END, "Детекция запущена...\n")
 
 def stop_detection_func():
     """Остановка детекции"""
@@ -126,6 +160,7 @@ def stop_detection_func():
     stop_detection = True
     detection_active = False
     print("Остановка детекции...")
+
 
 def draw_detections(frame):
     """Отрисовка результатов OBB детекции на кадре"""
@@ -185,6 +220,12 @@ def update_video():
 label_video = tk.Label(root)
 label_video.pack(expand=True)
 label_video.place(x=50, y=50)
+ 
+
+labelTextArea = tk.Label(root, text="Detection Log")
+labelTextArea.place(x=800, y=20)  
+textArea = tk.Text(root, height=10, width=40)
+textArea.place(x=800, y=50)
 
 buttonDetect = tk.Button(root, text="OBB detect", command=start_detection)
 buttonDetect.place(x=50, y=600)
