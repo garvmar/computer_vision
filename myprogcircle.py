@@ -25,6 +25,7 @@ detection_active = False
 detection_thread = None
 stop_detection = False
 detection_results = []
+circle_detection_active = False  
 
 def update_text_field(text):
     global textArea
@@ -50,7 +51,6 @@ def create_mask_from_rect(img_shape, rect):
     cv2.fillPoly(mask, [box], 255)
     return mask
 
-
 def detect_circles_in_rect_realtime(img, rect, min_radius=10, max_radius=60):
     if rect is None or img is None:
         return []
@@ -58,7 +58,6 @@ def detect_circles_in_rect_realtime(img, rect, min_radius=10, max_radius=60):
     mask = create_mask_from_rect(img.shape, rect)
     masked_img = cv2.bitwise_and(img, img, mask=mask)
     
-
     gray = cv2.cvtColor(masked_img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (9, 9), 2)
     
@@ -73,7 +72,7 @@ def detect_circles_in_rect_realtime(img, rect, min_radius=10, max_radius=60):
         minRadius=min_radius,
         maxRadius=max_radius
     )
-    
+
     detected_circles = []
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
@@ -164,7 +163,21 @@ def run_detection():
     print("=== OBB ДЕТЕКЦИЯ ОСТАНОВЛЕНА ===\n")
 
 def find_angle():
-    print("find angle")
+    """Запуск/остановка непрерывного поиска окружностей"""
+    global circle_detection_active
+    
+    circle_detection_active = not circle_detection_active
+    
+    if circle_detection_active:
+        print("Непрерывный поиск окружностей ЗАПУЩЕН")
+        textArea.insert(tk.END, "Непрерывный поиск окружностей ЗАПУЩЕН\n")
+        textArea.see(tk.END)
+        buttonDetectCircle.config(text="Stop detect angle")
+    else:
+        print("Непрерывный поиск окружностей ОСТАНОВЛЕН")
+        textArea.insert(tk.END, "Непрерывный поиск окружностей ОСТАНОВЛЕН\n")
+        textArea.see(tk.END)
+        buttonDetectCircle.config(text="Detect angle")
 
 def start_detection():
     """Запуск детекции"""
@@ -191,7 +204,7 @@ def start_detection():
 
 def stop_detection_func():
     """Остановка детекции"""
-    global stop_detection, detection_active
+    global stop_detection, detection_active, circle_detection_active
     
     if not detection_active:
         print("Детекция уже остановлена")
@@ -199,6 +212,8 @@ def stop_detection_func():
     
     stop_detection = True
     detection_active = False
+    circle_detection_active = False
+    buttonDetectCircle.config(text="Detect angle")
     
     print("Остановка детекции...")
     textArea.insert(tk.END, "Остановка детекции...\n")
@@ -235,6 +250,42 @@ def draw_detections(frame):
             return frame
     return frame
 
+def process_circles(frame):
+    """Обработка кадра для поиска окружностей"""
+    global detection_results
+    
+    if not circle_detection_active or not detection_results:
+        return frame
+    
+    try:
+        if detection_results[0].obb is None or len(detection_results[0].obb) == 0:
+            return frame
+        
+        obb = detection_results[0].obb
+        frame_copy = frame.copy()
+        total_circles = 0
+        
+        # Для каждого обнаруженного OBB ищем окружности
+        for box in obb:
+            coords = box.xyxyxyxy[0].cpu().numpy()
+            rect = cv2.minAreaRect(coords.astype(np.float32))
+
+            circles = detect_circles_in_rect_realtime(frame_copy, rect, min_radius=5, max_radius=50)
+            
+            if circles:
+                total_circles += len(circles)
+                
+                # Рисуем найденные окружности на кадре
+                for (x, y, r) in circles:
+                    cv2.circle(frame_copy, (x, y), r, (0, 255, 0), 3)
+                    cv2.circle(frame_copy, (x, y), 2, (0, 0, 255), 3)
+                    
+        return frame_copy
+        
+    except Exception as e:
+        print(f"Ошибка при поиске окружностей: {e}")
+        return frame
+
 def update_video():
     global current_frame
     
@@ -247,6 +298,10 @@ def update_video():
             frame_display = draw_detections(frame)
         else:
             frame_display = frame
+        
+        # Если активен непрерывный поиск окружностей
+        if circle_detection_active:
+            frame_display = process_circles(frame_display)
         
         # Преобразуем в RGB для отображения в Tkinter
         frame_rgb = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
