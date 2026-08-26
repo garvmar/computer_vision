@@ -27,18 +27,9 @@ stop_detection = False
 detection_results = []
 
 def update_text_field(text):
-    """Обновление текстового поля с координатами"""
     global textArea
-    
     textArea.insert(tk.END, text + "\n")
-    
-    # Автоматическая прокрутка вниз
     textArea.see(tk.END)
-    
-    # Ограничиваем количество строк 
-    lines = textArea.get("1.0", tk.END).count('\n')
-    if lines > 100:
-        textArea.delete("1.0", "2.0")
 
 def resize_for_display(img, max_size=700):
     height, width = img.shape[:2]
@@ -85,9 +76,11 @@ def run_detection():
                                 textArea.insert(tk.END, f"\nКадр {frame_count} - Найдено объектов: {len(obb)}\n")
                                 textArea.insert(tk.END, "="*40 + "\n")
                             
+                            textArea.see(tk.END)  
+                            
                             print(f"\n{'='*40}")
                             print(f"Кадр {frame_count} - Найдено объектов: {len(obb)}")
-                            print(f"{'='*40}")
+                            print(f"{'-'*40}")
                             
                             for i, box in enumerate(obb):
                                 # Получаем координаты OBB (4 точки)
@@ -97,28 +90,26 @@ def run_detection():
                                 center_x = int(np.mean(coords[:, 0]))
                                 center_y = int(np.mean(coords[:, 1]))
                                 
-                                # Получаем класс и уверенность
+                                # Класс и уверенность
                                 cls_id = int(box.cls[0])
                                 conf = float(box.conf[0])
                                 cls_name = model.names[cls_id] if cls_id in model.names else f"Class {cls_id}"
                                 
-                                # Формируем сообщение
-                                msg = f"Объект {i+1} [{cls_name} {conf:.2%}]: Центра = ({center_x}, {center_y})"
-                                
-                                # Выводим в консоль
+                                msg = f"Объект {i+1} [{cls_name} {conf:.2%}]: Центр = ({center_x}, {center_y})"
                                 print(msg)
-                                
-                                # Выводим в текстовое поле
                                 textArea.insert(tk.END, msg + "\n")
+                                textArea.see(tk.END)
                                 
                     else:
                         if frame_count % 10 == 0:
                             print("Объекты не обнаружены...")
                             if frame_count % 30 == 0:  # Обновляем текстовое поле реже
                                 textArea.insert(tk.END, "Объекты не обнаружены...\n")
+                                textArea.see(tk.END) 
                     
             except Exception as e:
                 textArea.insert(tk.END, "Ошибка при детекции \n")
+                textArea.see(tk.END)  
         
         time.sleep(0.1)
     
@@ -138,7 +129,6 @@ def start_detection():
         print("Ошибка: Нет видео с камеры")
         return
     
-    # Очищаем текстовое поле при запуске
     textArea.delete("1.0", tk.END)
     
     detection_results = []
@@ -146,8 +136,9 @@ def start_detection():
     detection_thread = threading.Thread(target=run_detection, daemon=True)
     detection_thread.start()
     
-    print("OBB детекция запущена. Ожидайте обнаружения объектов...")
+    print("Детекция запущена...")
     textArea.insert(tk.END, "Детекция запущена...\n")
+    textArea.see(tk.END)
 
 def stop_detection_func():
     """Остановка детекции"""
@@ -159,21 +150,23 @@ def stop_detection_func():
     
     stop_detection = True
     detection_active = False
+    
     print("Остановка детекции...")
+    textArea.insert(tk.END, "Остановка детекции...\n")
+    textArea.see(tk.END)
 
 
 def draw_detections(frame):
     """Отрисовка результатов OBB детекции на кадре"""
     if detection_results and len(detection_results) > 0:
         try:
-            # Используем встроенную отрисовку YOLO
+            # Встроенная YOLO
             annotated_frame = detection_results[0].plot()
             
             # Дополнительно рисуем центры объектов
             if detection_results[0].obb is not None:
                 obb = detection_results[0].obb
                 for box in obb:
-                    # Получаем координаты OBB
                     coords = box.xyxyxyxy[0].cpu().numpy()
                     center_x = int(np.mean(coords[:, 0]))
                     center_y = int(np.mean(coords[:, 1]))
@@ -224,7 +217,7 @@ label_video.place(x=50, y=50)
 
 labelTextArea = tk.Label(root, text="Detection Log")
 labelTextArea.place(x=800, y=20)  
-textArea = tk.Text(root, height=10, width=40)
+textArea = tk.Text(root, height=10, width=44)
 textArea.place(x=800, y=50)
 
 buttonDetect = tk.Button(root, text="OBB detect", command=start_detection)
