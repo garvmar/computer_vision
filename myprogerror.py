@@ -7,7 +7,6 @@ import threading
 import time
 import math  
 
-
 model = YOLO('obb3000.pt').to('cpu')
 print("Модель YOLO загружена")
 
@@ -28,11 +27,7 @@ stop_detection = False
 detection_results = []
 circle_detection_active = False  
 frame_count = 0 
-
-def update_text_field(text):
-    global textArea
-    textArea.insert(tk.END, text + "\n")
-    textArea.see(tk.END)
+obb_angles_from_process = {}
 
 def resize_for_display(img, max_size=700):
     height, width = img.shape[:2]
@@ -63,7 +58,6 @@ def detect_circles_in_rect_realtime(img, rect, min_radius=55, max_radius=60):
     gray = cv2.cvtColor(masked_img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (9, 9), 2)
     
-    # Поиск окружностей методом Хафа
     circles = cv2.HoughCircles(
         blurred,
         cv2.HOUGH_GRADIENT,
@@ -99,8 +93,36 @@ def calculate_angle(rect_center, circle_center):
     
     return angle_deg, angle_rad
 
+def compute_obb_long_side_angle(box):
+    try:
+        coords = box.xyxyxyxy[0].cpu().numpy()
+        points = coords.reshape(4, 2)
+
+        side1 = np.linalg.norm(points[1] - points[0])
+        side2 = np.linalg.norm(points[2] - points[1])
+
+        sides = [side1, side2]
+        max_side_index = np.argmax(sides)
+
+        if max_side_index == 0:
+            vector = points[1] - points[0]
+        else:
+            vector = points[2] - points[1]
+
+        angle_rad = math.atan2(vector[1], vector[0])
+        angle_deg = math.degrees(angle_rad)
+
+        angle_deg = abs(angle_deg)
+        if angle_deg > 90:
+            angle_deg = 180 - angle_deg
+
+        return angle_deg
+    except Exception as e:
+        print(f"Ошибка при вычислении угла OBB: {e}")
+        return None
+
 def show_error_angle():
-    global detection_results, textError
+    global detection_results, textError, obb_angles_from_process
     
     textError.delete("1.0", tk.END)
     
@@ -114,41 +136,52 @@ def show_error_angle():
             return
         
         obb = detection_results[0].obb
+        textError.insert(tk.END, "="*40 + "\n")
+        textError.insert(tk.END, "СРАВНЕНИЕ УГЛОВ OBB\n")
         textError.insert(tk.END, "="*40 + "\n\n")
         
         for i, box in enumerate(obb):
-            coords = box.xyxyxyxy[0].cpu().numpy()
-            points = coords.reshape(4, 2)
+
+            angle_from_show = compute_obb_long_side_angle(box)
+            angle_from_process = obb_angles_from_process.get(i, None)
             
-            side1 = np.linalg.norm(points[0] - points[1])
-            side2 = np.linalg.norm(points[1] - points[2])
-
-            sides = [side1, side2]
-            max_side_index = np.argmax(sides)
-
-            if max_side_index == 0:  
-                vector = points[1] - points[0]
-            elif max_side_index == 1:  
-                vector = points[2] - points[1]
-
-            angle_rad = math.atan2(vector[1], vector[0])
-            angle_deg = math.degrees(angle_rad)
-            
-            angle_deg = abs(angle_deg)
-            if angle_deg > 90:
-                angle_deg = 180 - angle_deg
-
             cls_id = int(box.cls[0])
             conf = float(box.conf[0])
             cls_name = model.names[cls_id] if cls_id in model.names else f"Class {cls_id}"
             
             msg = f"Объект {i+1} [{cls_name} {conf:.2%}]:\n"
-            msg += f"  Угол наклона: { angle_deg:.2f}°\n"
+            msg += f" Абсолютные значения углов от 0 до pi/2\n"
+
+            if angle_from_show is not None:
+                msg += f"  Угол OBB: {angle_from_show:.2f}°\n"
+            else:
+                msg += f"  Угол OBB: ошибка\n"
+            
+            if angle_from_process is not None:
+                angle_from_process = abs(angle_from_process)
+                if angle_from_process > 90:
+                       angle_from_process = 180 - angle_from_process
+                msg += f"  Угол вычисленный: {abs(angle_from_process):.2f}°\n"
+            else:
+                msg += f"  Угол вычисленный: не вычислен\n"
+            
+            # Абсолютная и относительная ошибк
+            if angle_from_show is not None and angle_from_process is not None:
+                abs_error = abs(angle_from_show - abs(angle_from_process))
+                if angle_from_show != 0:
+                    rel_error = (abs_error / angle_from_show) * 100.0
+                else:
+                    rel_error = 0.0 if abs_error == 0 else float('inf')
+                
+                msg += f"  Абсолютная ошибка: {abs_error:.2f}°\n"
+                msg += f"  Относительная ошибка: {rel_error:.2f}%\n"
+            else:
+                msg += f"  Ошибка: недостаточно данных для сравнения\n"
+            
+            msg += "-"*40 + "\n"
+            
             textError.insert(tk.END, msg)
             print(msg)
-     
-            print(f"  Угол : {angle_rad:.4f}, {angle_deg:.2f}°")
-            print("-"*40)
         
         textError.see(tk.END)
         
@@ -175,13 +208,11 @@ def run_detection():
                 if results and len(results) > 0:
                     detection_results = results
                     
-                    # Обработка результатов для OBB
                     if results[0].obb is not None and len(results[0].obb) > 0:
                         obb = results[0].obb
                         local_frame_count += 1
                         frame_count = local_frame_count
                         
-                        # Выводим информацию каждые 3 кадра
                         if local_frame_count % 3 == 0:
                             if local_frame_count == 3:
                                 textArea.delete("1.0", tk.END)
@@ -197,14 +228,12 @@ def run_detection():
                             print(f"Кадр {local_frame_count} - Найдено объектов: {len(obb)}")
                             print(f"{'-'*40}")
                             
-                            # Если активен поиск окружностей, выводим центры и углы для каждого объекта
                             if circle_detection_active:
                                 for i, box in enumerate(obb):
                                     coords = box.xyxyxyxy[0].cpu().numpy()
                                     rect = cv2.minAreaRect(coords.astype(np.float32))
                                     rect_center = (int(rect[0][0]), int(rect[0][1]))
                                     
-                                    # Выводим центр прямоугольника
                                     cls_id = int(box.cls[0])
                                     conf = float(box.conf[0])
                                     cls_name = model.names[cls_id] if cls_id in model.names else f"Class {cls_id}"
@@ -229,7 +258,6 @@ def run_detection():
                                         textArea.insert(tk.END, msg_no_circles + "\n")
                                         textArea.see(tk.END)
                             else:
-                                # Если поиск окружностей не активен, выводим только центры
                                 for i, box in enumerate(obb):
                                     coords = box.xyxyxyxy[0].cpu().numpy()
                                     center_x = int(np.mean(coords[:, 0]))
@@ -326,7 +354,6 @@ def draw_detections(frame):
         try:
             annotated_frame = detection_results[0].plot()
             
-            # Дополнительно рисуем центры объектов
             if detection_results[0].obb is not None:
                 obb = detection_results[0].obb
                 for box in obb:
@@ -337,7 +364,6 @@ def draw_detections(frame):
                     cv2.drawMarker(annotated_frame, (center_x, center_y), 
                                  (0, 0, 255), cv2.MARKER_CROSS, 20, 3)
                     
-                    # Добавляем текст с координатами центра
                     cv2.putText(annotated_frame, f"({center_x}, {center_y})", 
                               (center_x + 15, center_y - 15), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -349,8 +375,7 @@ def draw_detections(frame):
     return frame
 
 def process_circles(frame):
-    """Обработка кадра для поиска окружностей"""
-    global detection_results
+    global detection_results, obb_angles_from_process
     
     if not circle_detection_active or not detection_results:
         return frame
@@ -362,8 +387,9 @@ def process_circles(frame):
         obb = detection_results[0].obb
         frame_copy = frame.copy()
         
-        # Для каждого обнаруженного OBB ищем окружности
-        for box in obb:
+        obb_angles_from_process = {}
+        
+        for i, box in enumerate(obb):
             coords = box.xyxyxyxy[0].cpu().numpy()
             rect = cv2.minAreaRect(coords.astype(np.float32))
             rect_center = (int(rect[0][0]), int(rect[0][1]))
@@ -371,15 +397,14 @@ def process_circles(frame):
             circles = detect_circles_in_rect_realtime(frame_copy, rect, min_radius=5, max_radius=50)
             
             if circles:
-                # Рисуем найденные окружности на кадре
                 for (x, y, r) in circles:
                     cv2.circle(frame_copy, (x, y), r, (0, 255, 0), 3)
                     cv2.circle(frame_copy, (x, y), 2, (0, 0, 255), 3)
                     
                     cv2.line(frame_copy, rect_center, (x, y), (255, 0, 0), 2)
                     
-                    # Вычисляем угол
                     angle_deg, angle_rad = calculate_angle(rect_center, (x, y))
+                    obb_angles_from_process[i] = angle_deg
                     
                     angle_text = f"{angle_rad:.1f}"
                     cv2.putText(frame_copy, angle_text, ((rect_center[0] + x)//2 - 20, (rect_center[1] + y)//2 - 10),
@@ -398,17 +423,14 @@ def update_video():
     if ret:
         current_frame = frame.copy()
         
-        # Если детекция активна, отрисовываем результаты
         if detection_active and detection_results:
             frame_display = draw_detections(frame)
         else:
             frame_display = frame
         
-        # Если активен непрерывный поиск окружностей
         if circle_detection_active:
             frame_display = process_circles(frame_display)
         
-        # Преобразуем в RGB для отображения в Tkinter
         frame_rgb = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
         frame_resized = resize_for_display(frame_rgb)
         img_pil = Image.fromarray(frame_resized)
