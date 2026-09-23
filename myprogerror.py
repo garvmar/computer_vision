@@ -416,6 +416,36 @@ def process_circles(frame):
         print(f"Ошибка при поиске окружностей: {e}")
         return frame
 
+def draw_camera_zero_and_horizon(frame):
+    frame_copy = frame.copy()
+    h, w = frame_copy.shape[:2]
+    
+    camera_zero = (w // 2, h // 2)
+    
+    cv2.circle(frame_copy, camera_zero, 6, (0, 255, 255), -1)
+    cv2.circle(frame_copy, camera_zero, 8, (0, 0, 0), 2)
+    
+    cv2.line(frame_copy, (0, camera_zero[1]), (w, camera_zero[1]), (0, 255, 255), 2)
+    cv2.line(frame_copy, (camera_zero[0], 0), (camera_zero[0], h), (0, 255, 255), 1)
+
+    if detection_results and len(detection_results) > 0:
+        try:
+            if detection_results[0].obb is not None and len(detection_results[0].obb) > 0:
+                obb = detection_results[0].obb
+                for box in obb:
+                    coords = box.xyxyxyxy[0].cpu().numpy()
+                    rect = cv2.minAreaRect(coords.astype(np.float32))
+                    cx, cy = int(rect[0][0]), int(rect[0][1])
+                    
+                    cv2.circle(frame_copy, (cx, cy), 5, (0, 0, 255), -1)
+                    cv2.line(frame_copy, (cx, cy), (w, cy), (0, 255, 0), 1)
+                    cv2.line(frame_copy, (0, cy), (cx, cy), (0, 255, 0), 1)
+                    
+        except Exception as e:
+            print(f"Ошибка при отрисовке мнимого нуля OBB: {e}")
+    
+    return frame_copy
+
 def update_video():
     global current_frame
     
@@ -430,6 +460,8 @@ def update_video():
         
         if circle_detection_active:
             frame_display = process_circles(frame_display)
+
+        frame_display = draw_camera_zero_and_horizon(frame_display) 
         
         frame_rgb = cv2.cvtColor(frame_display, cv2.COLOR_BGR2RGB)
         frame_resized = resize_for_display(frame_rgb)
