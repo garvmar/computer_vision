@@ -7,6 +7,8 @@ import threading
 import time
 import math  
 
+CIRCLE_PICK_MAX_RADIUS = 50   
+
 
 model = YOLO('obb3000.pt').to('cpu')
 print("Модель YOLO загружена")
@@ -90,6 +92,18 @@ def detect_circles_in_rect_realtime(img, rect, min_radius=10, max_radius=60):
     
     return detected_circles
 
+
+def pick_largest_circle(circles, max_radius=CIRCLE_PICK_MAX_RADIUS):
+    """
+    Возвращает список из одной окружности — с наибольшим радиусом, но не больше max_radius"""
+    if not circles:
+        return []
+    filtered = [c for c in circles if c[2] <= max_radius]
+    if not filtered:
+        return []
+    return [max(filtered, key=lambda c: c[2])]
+
+
 def calculate_angle(rect_center, circle_center):
     dx = circle_center[0] - rect_center[0]
     dy = -(circle_center[1] - rect_center[1])  
@@ -120,6 +134,13 @@ def run_detection():
                     # Обработка результатов для OBB
                     if results[0].obb is not None and len(results[0].obb) > 0:
                         obb = results[0].obb
+                        
+                        if len(obb) > 1:
+                            confs = obb.conf.cpu().numpy()
+                            best_idx = int(np.argmax(confs))
+                            obb = obb[best_idx:best_idx+1]
+                            results[0].obb = obb
+
                         local_frame_count += 1
                         frame_count = local_frame_count
                         
@@ -158,10 +179,14 @@ def run_detection():
                                     
                                     circles = detect_circles_in_rect_realtime(current_frame, rect, min_radius=5, max_radius=50)
                                     
+                                    # ===== Фильтр: одна окружность с наибольшим радиусом, но не больше MAX =====
+                                    circles = pick_largest_circle(circles, max_radius=CIRCLE_PICK_MAX_RADIUS)
+                                    # ==========================================================================
+
                                     if circles:
                                         for j, (x, y, r) in enumerate(circles):
                                             angle_deg, angle_rad = calculate_angle(rect_center, (x, y))
-                                            msg_angle = f"Окружность {j+1}: Центр = ({x}, {y}) \nУгол = {angle_deg:.2f}° ({angle_rad:.4f} рад)"
+                                            msg_angle = f"Окружность {j+1}: Центр = ({x}, {y}), R = {r} \nУгол = {angle_deg:.2f}° ({angle_rad:.4f} рад)"
                                             print(msg_angle)
                                             textArea.insert(tk.END, msg_angle + "\n")
                                             textArea.see(tk.END)
@@ -220,6 +245,8 @@ def find_angle():
         textArea.insert(tk.END, "Непрерывный поиск окружностей остановлен\n")
         textArea.see(tk.END)
         buttonDetectCircle.config(text="Detect angle")
+
+
 def obb_detection():
     """Запуск/остановка детекции одной кнопкой"""
     global detection_thread, stop_detection, detection_active, frame_count, detection_results, circle_detection_active
@@ -304,7 +331,8 @@ def process_circles(frame):
             rect_center = (int(rect[0][0]), int(rect[0][1]))
 
             circles = detect_circles_in_rect_realtime(frame_copy, rect, min_radius=5, max_radius=50)
-            
+            circles = pick_largest_circle(circles, max_radius=CIRCLE_PICK_MAX_RADIUS)
+
             if circles:
                 # Рисуем найденные окружности на кадре
                 for (x, y, r) in circles:
